@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.10.1] - 2026-07-13
 
+This release was just done to correct for the messed up PyPi release of v0.10.0.
+
+## [0.10.0] - 2026-07-13
+
+Messed up release. Never published to pypi.
+
 ### Changed
 
 - `aimmd.ops`: The density collector is now attached to the `aimmd.ops.hooks.DensityCollectionHook` and uses the new density collector implementation from `aimmd.base.density_collection`
@@ -26,9 +32,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `aimmd.base.rcmodel`: Removed old TrajectoryDensityCollector (attached to model) as it is no longer needed with the ops-based aimmd also now using the new `aimmd.base.density_collector.DensityCollector` class
 - `aimmd.distributed`: The density collection `BrainTask` has been removed as it is no longer needed due to the rework of density collection (see changed).
 
-## [0.10.0] - 2026-07-13
-
-Messed up release. Never published to pypi.
 
 ## [0.9.3] - 2025-08-03
 
