@@ -58,16 +58,21 @@ class BrainTask(abc.ABC):
     to openpathsampling hooks.
     """
 
-    def __init__(self, interval: int = 1):
+    def __init__(self, interval: int = 1) -> None:
         self.interval = interval
 
     @abc.abstractmethod
-    async def run(self, brain, mcstep: MCstep, sampler_idx: int):
+    async def run(self, brain: "Brain", mcstep: MCstep, sampler_idx: int) -> MCstep:
         """
         This method is called by the `Brain` every `interval` steps.
 
-        It is called with the brain performing the simulation, the mcstep that
-        just finished and the sampler index if the sampler that did the step.
+        It is called with the brain performing the simulation, the MCstep that
+        just finished and the sampler index of the sampler that did the step.
+
+        It is expected to return the :class:`MCstep` to make it obvious that the
+        task can add or change attributes of the MCstep.
+        Note that saving of the MCstep happens after alls task have run, i.e.,
+        the additions/changes will be stored.
         """
         raise NotImplementedError
 
@@ -75,8 +80,8 @@ class BrainTask(abc.ABC):
 class SaveTask(BrainTask):
     """Save the model and trainset at given interval (in steps) to storage."""
 
-    def __init__(self, storage, model, trainset: TrainSet,
-                 interval: int = 100, name_prefix: str = "Central_RCModel"):
+    def __init__(self, storage, model, trainset: TrainSet, *,
+                 interval: int = 100, name_prefix: str = "Central_RCModel") -> None:
         """
         Initialize a :class:`SaveTask`.
 
@@ -101,7 +106,7 @@ class SaveTask(BrainTask):
         self.trainset = trainset
         self.name_prefix = name_prefix
 
-    async def run(self, brain, mcstep: MCstep, sampler_idx: int):
+    async def run(self, brain: "Brain", mcstep: MCstep, sampler_idx: int) -> MCstep:
         """This method is called by the `Brain` every `interval` steps."""
         # this only runs when total_steps % interval == 0
         # i.e. we can just save when we run
@@ -110,6 +115,7 @@ class SaveTask(BrainTask):
             self.storage.save_trainset(self.trainset)
             savename = f"{self.name_prefix}_after_step{brain.total_steps}"
             self.storage.rcmodels[savename] = self.model
+        return mcstep
 
 
 class TrainingTask(BrainTask):
@@ -121,7 +127,7 @@ class TrainingTask(BrainTask):
     wants to train).
     """
 
-    def __init__(self, model, trainset: TrainSet):
+    def __init__(self, model, trainset: TrainSet) -> None:
         """
         Initialize a :class:`TrainingTask`.
 
@@ -137,9 +143,10 @@ class TrainingTask(BrainTask):
         self.trainset = trainset
         self.model = model
 
-    async def run(self, brain, mcstep: MCstep, sampler_idx: int):
+    async def run(self, brain: "Brain", mcstep: MCstep, sampler_idx: int) -> MCstep:
         """This method is called by the `Brain` every `interval` steps."""
-        try:
+        try:  # pylint: disable=too-many-try-statements
+            # It is fine to put all those 3 in one try-block because we need all of them
             states_reached = mcstep.states_reached
             shooting_snap = mcstep.shooting_snap
             predicted_committors_sp = mcstep.predicted_committors_sp
@@ -158,6 +165,8 @@ class TrainingTask(BrainTask):
                 # call the train hook every time, the model 'decides' on its
                 # own if it trains
                 self.model.train_hook(self.trainset)
+        # always return the MCstep
+        return mcstep
 
 
 class StorageCheckpointTask(BrainTask):
@@ -176,9 +185,10 @@ class StorageCheckpointTask(BrainTask):
     def __init__(self,
                  storage,
                  interval: int = 50,
+                 *,
                  checkpoint_suffix: str = ".ckpt",
                  checkpoint_prev_suffix: str = "_prev",
-                 ):
+                 ) -> None:
         """
         Initialize a :class:`StorageCheckpointTask`.
 
@@ -201,7 +211,7 @@ class StorageCheckpointTask(BrainTask):
         self.checkpoint_suffix = checkpoint_suffix
         self.checkpoint_prev_suffix = checkpoint_prev_suffix
 
-    async def run(self, brain, mcstep: MCstep, sampler_idx: int):
+    async def run(self, brain: "Brain", mcstep: MCstep, sampler_idx: int) -> MCstep:
         """
         This method is called by the `Brain` every `interval` steps.
 
@@ -237,6 +247,8 @@ class StorageCheckpointTask(BrainTask):
         logger.info("Copied storage file %s to create checkpoint %s.",
                     fname, checkpoint_fname,
                     )
+
+        return mcstep
 
 
 # TODO: DOCUMENT! Directly write a paragraph of documentation for use with sphinx!?
@@ -276,7 +288,7 @@ class Brain:
 
     def __init__(self, model, workdir, storage, sampler_to_mcstepcollection,
                  movers_per_sampler, mover_weights_per_sampler=None, tasks=[],
-                 **kwargs):
+                 **kwargs) -> None:
         """
         Initialize a :class:`Brain`.
 
@@ -360,7 +372,7 @@ class Brain:
                                       )
                          ]
 
-    def _check_model(self, model):
+    def _check_model(self, model) -> None:
         """Check model for basic sanity before TPS simulation.
 
         Checks:
@@ -877,13 +889,32 @@ class Brain:
         steps_tqdm.close()
 
     # TODO: use the PathSamplingSimStateInfo dataclass here too?!
-    # (instead of sampler_idx)
-    # TODO: Document!
-    async def run_tasks(self, mcstep, sampler_idx):
+    # (instead of sampler_idx) and maybe even use the SimStateInfo for th task.run method too?!
+    async def run_tasks(self, mcstep: MCstep, sampler_idx: int) -> MCstep:
+        """
+        Run all :class:`BrainTask` attached to this brain. Called by each :class:`PathChainSampler`
+        automatically when it finishes a MCstep.
+
+        Note: As a user you should only call this function only when you know why.
+        In all practical circumstences it will have already been called on an MCstep
+        before it reaches you.
+
+        Parameters
+        ----------
+        mcstep : MCstep
+            The MCstep to run the tasks with.
+        sampler_idx : int
+            The index of the PathChainSampler that genrated this step.
+
+        Returns
+        -------
+        MCstep
+            The potentially modified MCstep.
+        """
         for t in self.tasks:
             if self.total_steps % t.interval == 0:
-                await t.run(brain=self, mcstep=mcstep,
-                            sampler_idx=sampler_idx)
+                mcstep = await t.run(brain=self, mcstep=mcstep,
+                                     sampler_idx=sampler_idx)
         return mcstep
 
 
